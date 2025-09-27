@@ -1,0 +1,188 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <title>JSDoc: Source: PostEffect/posteffect-brightnesscontrast.js</title>
+
+    <script src="scripts/prettify/prettify.js"> </script>
+    <script src="scripts/prettify/lang-css.js"> </script>
+    <!--[if lt IE 9]>
+      <script src="//html5shiv.googlecode.com/svn/trunk/html5.js"></script>
+    <![endif]-->
+    <link type="text/css" rel="stylesheet" href="styles/prettify-tomorrow.css">
+    <link type="text/css" rel="stylesheet" href="styles/jsdoc-default.css">
+</head>
+
+<body>
+
+<div id="main">
+
+    <h1 class="page-title">Source: PostEffect/posteffect-brightnesscontrast.js</h1>
+
+    
+
+
+
+    
+    <section>
+        <article>
+            <pre class="prettyprint source linenums"><code>///&lt;reference path="/Users/sasakiwa/.vscode/extensions/playcanvas.playcanvas-0.2.2/node_modules/playcanvas/build/playcanvas.d.ts" />;
+// --------------- POST EFFECT DEFINITION --------------- //
+/**
+ * @class
+ * @name BrightnessContrastEffect
+ * @classdesc
+ * [EN] Post effect that changes the brightness and contrast of the input render target.  
+ * [JP] 入力レンダーターゲットの明るさとコントラストを変更するポストエフェクト。
+ *
+ * @description
+ * [EN] Creates a new instance of the BrightnessContrastEffect post effect.  
+ * [JP] BrightnessContrastEffect ポストエフェクトの新しいインスタンスを作成します。
+ *
+ * @augments PostEffect
+ * @param {GraphicsDevice} graphicsDevice
+ * [EN] The graphics device of the application.  
+ * [JP] アプリケーションの GraphicsDevice。
+ *
+ * @property {number} brightness  
+ * [EN] Controls the brightness. Range: -1 to 1. (-1 = solid black, 0 = no change, 1 = solid white)  
+ * [JP] 明るさを制御します。範囲は -1 から 1 です。(-1 = 完全な黒, 0 = 変化なし, 1 = 完全な白)
+ *
+ * @property {number} contrast  
+ * [EN] Controls the contrast. Range: -1 to 1. (-1 = solid gray, 0 = no change, 1 = maximum contrast)  
+ * [JP] コントラストを制御します。範囲は -1 から 1 です。(-1 = 完全な灰色, 0 = 変化なし, 1 = 最大コントラスト)
+ */
+class BrightnessContrastEffect extends pc.PostEffect {
+    constructor(graphicsDevice) {
+        super(graphicsDevice);
+
+        // Shader
+        const fshader = `
+            uniform sampler2D uColorBuffer;
+            uniform float uBrightness;
+            uniform float uContrast;
+            
+            varying vec2 vUv0;
+            
+            void main() {
+                gl_FragColor = texture2D(uColorBuffer, vUv0);
+                gl_FragColor.rgb += uBrightness;
+
+                if (uContrast > 0.0) {
+                    gl_FragColor.rgb = (gl_FragColor.rgb - 0.5) / (1.0 - uContrast) + 0.5;
+                } else {
+                    gl_FragColor.rgb = (gl_FragColor.rgb - 0.5) * (1.0 + uContrast) + 0.5;
+                }
+            }
+        `;
+
+        this.shader = pc.ShaderUtils.createShader(graphicsDevice, {
+            uniqueName: 'BrightnessContrastShader',
+            attributes: { aPosition: pc.SEMANTIC_POSITION },
+            vertexGLSL: pc.PostEffect.quadVertexShader,
+            fragmentGLSL: fshader
+        });
+
+        // Uniforms
+        this.brightness = 0;
+        this.contrast = 0;
+    }
+
+    render(inputTarget, outputTarget, rect) {
+        const device = this.device;
+        const scope = device.scope;
+
+        scope.resolve('uBrightness').setValue(this.brightness);
+        scope.resolve('uContrast').setValue(this.contrast);
+        scope.resolve('uColorBuffer').setValue(inputTarget.colorBuffer);
+
+        this.drawQuad(outputTarget, this.shader, rect);
+    }
+}
+
+// ----------------- SCRIPT DEFINITION ------------------ //
+var BrightnessContrast = pc.createScript('brightnessContrast');
+
+/**
+ * @class
+ * @name BrightnessContrast
+ * @classdesc PlayCanvas script wrapper for {@link BrightnessContrastEffect}.
+ * [EN] Script component to use BrightnessContrastEffect in the PlayCanvas Editor.  
+ * [JP] PlayCanvas エディタで BrightnessContrastEffect を利用するためのスクリプトコンポーネント。
+ *
+ * @property {number} brightness
+ * [EN] Controls the brightness of the render target.  
+ *      Range: -1 (solid black), 0 (no change), 1 (solid white).  
+ * [JP] レンダーターゲットの明るさを調整します。  
+ *      範囲: -1（真っ黒）、0（変化なし）、1（真っ白）。
+ *
+ * @property {number} contrast
+ * [EN] Controls the contrast of the render target.  
+ *      Range: -1 (solid gray), 0 (no change), 1 (maximum contrast).  
+ * [JP] レンダーターゲットのコントラストを調整します。  
+ *      範囲: -1（グレー）、0（変化なし）、1（最大コントラスト）。
+ */
+BrightnessContrast.attributes.add('brightness', {
+    type: 'number',
+    default: 0,
+    min: -1,
+    max: 1,
+    title: 'Brightness / 明るさ',
+    description: 'EN: Brightness adjustment (-1 = black, 0 = no change, 1 = white). / JP: 明るさの調整（-1 = 黒, 0 = 変化なし, 1 = 白）。'
+});
+
+BrightnessContrast.attributes.add('contrast', {
+    type: 'number',
+    default: 0,
+    min: -1,
+    max: 1,
+    title: 'Contrast / コントラスト',
+    description: 'EN: Contrast adjustment (-1 = gray, 0 = no change, 1 = max contrast). / JP: コントラストの調整（-1 = 灰色, 0 = 変化なし, 1 = 最大コントラスト）。'
+});
+
+BrightnessContrast.prototype.initialize = function () {
+    this.effect = new BrightnessContrastEffect(this.app.graphicsDevice);
+    this.effect.brightness = this.brightness;
+    this.effect.contrast = this.contrast;
+
+    this.on('attr', function (name, value) {
+        this.effect[name] = value;
+    }, this);
+
+    const queue = this.entity.camera.postEffects;
+    queue.addEffect(this.effect);
+
+    this.on('state', function (enabled) {
+        if (enabled) {
+            queue.addEffect(this.effect);
+        } else {
+            queue.removeEffect(this.effect);
+        }
+    });
+
+    this.on('destroy', function () {
+        queue.removeEffect(this.effect);
+    });
+};</code></pre>
+        </article>
+    </section>
+
+
+
+
+</div>
+
+<nav>
+    <h2><a href="index.html">Home</a></h2><h3>Classes</h3><ul><li><a href="BlendEffect.html">BlendEffect</a></li><li><a href="Bloom.html">Bloom</a></li><li><a href="BloomEffect.html">BloomEffect</a></li><li><a href="Bokeh.html">Bokeh</a></li><li><a href="BokehEffect.html">BokehEffect</a></li><li><a href="BrightnessContrast.html">BrightnessContrast</a></li><li><a href="BrightnessContrastEffect.html">BrightnessContrastEffect</a></li><li><a href="EdgeDetect.html">EdgeDetect</a></li><li><a href="EdgeDetectEffect.html">EdgeDetectEffect</a></li><li><a href="Fxaa.html">Fxaa</a></li><li><a href="FxaaEffect.html">FxaaEffect</a></li><li><a href="G2Toonshader.html">G2Toonshader</a></li><li><a href="HorizontalTiltShift.html">HorizontalTiltShift</a></li><li><a href="HorizontalTiltShiftEffect.html">HorizontalTiltShiftEffect</a></li><li><a href="HueSaturation.html">HueSaturation</a></li><li><a href="HueSaturationEffect.html">HueSaturationEffect</a></li><li><a href="Luminosity.html">Luminosity</a></li><li><a href="LuminosityEffect.html">LuminosityEffect</a></li><li><a href="OutlinePostEffect.html">OutlinePostEffect</a></li><li><a href="SSAO.html">SSAO</a></li><li><a href="SSAOEffect.html">SSAOEffect</a></li><li><a href="SepiaEffect.html">SepiaEffect</a></li><li><a href="VerticalTiltShift.html">VerticalTiltShift</a></li><li><a href="VerticalTiltShiftEffect.html">VerticalTiltShiftEffect</a></li><li><a href="Vignette.html">Vignette</a></li><li><a href="VignetteEffect.html">VignetteEffect</a></li><li><a href="blend.html">blend</a></li><li><a href="outline.html">outline</a></li><li><a href="sepia.html">sepia</a></li></ul><h3>Global</h3><ul><li><a href="global.html#calculateBlurValues">calculateBlurValues</a></li><li><a href="global.html#computeGaussian">computeGaussian</a></li></ul>
+</nav>
+
+<br class="clear">
+
+<footer>
+    Documentation generated by <a href="https://github.com/jsdoc/jsdoc">JSDoc 4.0.4</a> on Sat Sep 27 2025 18:54:43 GMT+0900 (日本標準時)
+</footer>
+
+<script> prettyPrint(); </script>
+<script src="scripts/linenumber.js"> </script>
+</body>
+</html>

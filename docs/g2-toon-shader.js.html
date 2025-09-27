@@ -1,0 +1,177 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <title>JSDoc: Source: g2-toon-shader.js</title>
+
+    <script src="scripts/prettify/prettify.js"> </script>
+    <script src="scripts/prettify/lang-css.js"> </script>
+    <!--[if lt IE 9]>
+      <script src="//html5shiv.googlecode.com/svn/trunk/html5.js"></script>
+    <![endif]-->
+    <link type="text/css" rel="stylesheet" href="styles/prettify-tomorrow.css">
+    <link type="text/css" rel="stylesheet" href="styles/jsdoc-default.css">
+</head>
+
+<body>
+
+<div id="main">
+
+    <h1 class="page-title">Source: g2-toon-shader.js</h1>
+
+    
+
+
+
+    
+    <section>
+        <article>
+            <pre class="prettyprint source linenums"><code>///&lt;reference path="/Users/sasakiwa/.vscode/extensions/playcanvas.playcanvas-0.2.2/node_modules/playcanvas/build/playcanvas.d.ts" />;
+//For questions, refer to https://github.com/guzuligo
+//Version 0.1.1
+//updated by devinhell
+/**
+ * @class G2Toonshader
+ * @classdesc
+ * [EN] A toon-shading effect that modifies the material shader chunks to create stylized lighting.  
+ * [JP] 材質のシェーダーチャンクを改変し、トゥーン調のライティングを実現するスクリプト。
+ *
+ * This script replaces parts of the standard material shader with toon-style ramp coloring,
+ * based on user-defined thresholds and colors.
+ *
+ * このスクリプトは、ユーザーが指定するしきい値と色に基づいて、
+ * 標準マテリアルのシェーダーの一部をトゥーン調のランプカラーに置き換えます。
+ */
+var G2Toonshader = pc.createScript('g2Toonshader');
+
+/**
+ * [EN] Whether to initialize the entity’s material on start.  
+ * [JP] スタート時にエンティティのマテリアルを初期化するかどうか。
+ */
+G2Toonshader.attributes.add("useThis",{title:"Initialize entity material",type:"boolean",default:true});
+
+/**
+ * [EN] The material to convert to toon-shaded. If empty, a new material is created.  
+ * [JP] トゥーンシェーディングに変換する対象マテリアル。空なら新しいマテリアルを作成。
+ */
+G2Toonshader.attributes.add("material",{type:"asset",assetType:"material",title:"Material",description:
+"The material to convert to toonshaded. If left empty, a new material will be created and you'll have to"+
+" assign this.material to your model to use it."});
+
+/**
+ * [EN] Controls the sharpness of the toon threshold.  
+ * [JP] トゥーンのしきい値の滑らかさを制御する。
+ */
+G2Toonshader.attributes.add("smooths",{type:"number",title:"Smoothness",min:0,max:1.0,default:0,description:
+"TTT"});
+
+
+/**
+ * [EN] Blending factor between base albedo and toon color.  
+ * [JP] ベースアルベドとトゥーンカラーのブレンド比率。
+ */
+G2Toonshader.attributes.add("mixAlbedo",{type:"number",title:"Diffuse Mix",min:0,max:1.0,default:0});
+
+/**
+ * [EN] Toon ramp steps: threshold and color. Multiple steps can be defined.  
+ * [JP] トゥーンランプのステップ：しきい値と色。複数定義可能。
+ */
+G2Toonshader.attributes.add("uF0",{type:"json",title:"Colors",array:true,schema:[
+    {name:"activation",title:"Density",type:"number",min:-0.01,max:1,default:.5},{name:"color",title:"Color",type:"rgb"}
+]});
+
+G2Toonshader.prototype.colors=0;
+// initialize code called once per entity
+G2Toonshader.statics={id:0};
+G2Toonshader.prototype.initialize = function() {
+    this.setup(this.material.resource);
+};
+
+G2Toonshader.prototype.setup=function(mat,clone_){
+    console.log("SETUP ",mat,clone_);
+    var m;
+    if (mat!==undefined){m=clone_?mat.clone():mat;}//TODO: to test
+    else
+    if(!this.material){
+        this.material=new pc.Asset("ToonMaterial"+(G2Toonshader.statics.id++),"material");
+
+        m=this.material.resource=new pc.StandardMaterial();
+    }else
+        m=this.material.resource;
+
+    this.m=m;//console.log("m=",m);
+    //this.material.chunks={};
+    this.m.chunks.APIVersion = pc.CHUNKAPI_1_70;
+    this.reset();this.setParams();
+    m.update();
+
+    return this.m;
+};
+
+G2Toonshader.prototype.reset=function(){
+    var m=this.m;
+
+    var replace0="\n\t uniform float smooths;uniform float mixAlbedo;";
+    var replace1="float v = max(max(dDiffuseLight.r,dDiffuseLight.g),dDiffuseLight.b);"+
+        "\n\t vec3 color=vec3(0.);\n";//vec4 color;";
+    this.colors=this.uF0.length;
+    for (var i=0;i&lt;this.uF0.length;i++){
+        replace0+="\n\t uniform float  uF"+i+";";
+        replace0+="\n\t uniform vec3   cF"+i+";";
+        replace1+="\n\t color=(1.-smoothstep(uF"+(i)+"-smooths,uF"+(i)+",v))*color+(smoothstep(uF"+(i)+"-smooths,uF"+(i)+",v))*cF"+i+";";
+    }
+    replace1+="\n\t ret += mix(color,albedo*color,mixAlbedo);";
+    console.log("pc.shaderChunks === " );////JSON.stringify(pc.shaderChunks, null, 4));
+    console.dir(pc.shaderChunks);
+    m.chunks.combinePS= //combineDiffuseSpecularPS=m.chunks.combineDiffuseSpecularNoReflPS=
+        //m.chunks.combineDiffusePS=m.chunks.combineDiffuseSpecularNoReflSeparateAmbientPS=
+        replace0+"\n"+
+        pc.shaderChunks.combinePS.replace(" ret += albedo * dDiffuseLight;",replace1).replace("ret += dReflection.rgb * dReflection.a;","ret=ret;").replace("ret += (dDiffuseLight - light_globalAmbient) * albedo + material_ambient * light_globalAmbient;",replace1).replace("ret += dSpecularLight;","ret=ret;").replace("ret += albedo * dDiffuseLight;",replace1);
+
+
+        //pc.shaderChunks.combineDiffusePS.replace("return dAlbedo * dDiffuseLight;",replace1);
+
+    m.update();
+};
+
+G2Toonshader.prototype.setParams=function(){
+    if(!this.m)return;
+    var m=this.m;
+    if(this.colors!=this.uF0.length)
+        this.reset();
+    m.setParameter('smooths', this.smooths);
+    m.setParameter('mixAlbedo', this.mixAlbedo);
+    for (var i=0;i&lt;this.uF0.length;i++){
+        var c=this.uF0[i].color;
+        m.setParameter('uF'+i, this.uF0[i].activation);
+        m.setParameter('cF'+i,[c.r,c.g,c.b]);
+    }
+
+};
+
+// update code called every frame
+G2Toonshader.prototype.update = function(dt) {
+    this.setParams();
+};</code></pre>
+        </article>
+    </section>
+
+
+
+
+</div>
+
+<nav>
+    <h2><a href="index.html">Home</a></h2><h3>Classes</h3><ul><li><a href="BlendEffect.html">BlendEffect</a></li><li><a href="Bloom.html">Bloom</a></li><li><a href="BloomEffect.html">BloomEffect</a></li><li><a href="Bokeh.html">Bokeh</a></li><li><a href="BokehEffect.html">BokehEffect</a></li><li><a href="BrightnessContrast.html">BrightnessContrast</a></li><li><a href="BrightnessContrastEffect.html">BrightnessContrastEffect</a></li><li><a href="EdgeDetect.html">EdgeDetect</a></li><li><a href="EdgeDetectEffect.html">EdgeDetectEffect</a></li><li><a href="Fxaa.html">Fxaa</a></li><li><a href="FxaaEffect.html">FxaaEffect</a></li><li><a href="G2Toonshader.html">G2Toonshader</a></li><li><a href="HorizontalTiltShift.html">HorizontalTiltShift</a></li><li><a href="HorizontalTiltShiftEffect.html">HorizontalTiltShiftEffect</a></li><li><a href="HueSaturation.html">HueSaturation</a></li><li><a href="HueSaturationEffect.html">HueSaturationEffect</a></li><li><a href="Luminosity.html">Luminosity</a></li><li><a href="LuminosityEffect.html">LuminosityEffect</a></li><li><a href="OutlinePostEffect.html">OutlinePostEffect</a></li><li><a href="SSAO.html">SSAO</a></li><li><a href="SSAOEffect.html">SSAOEffect</a></li><li><a href="SepiaEffect.html">SepiaEffect</a></li><li><a href="VerticalTiltShift.html">VerticalTiltShift</a></li><li><a href="VerticalTiltShiftEffect.html">VerticalTiltShiftEffect</a></li><li><a href="Vignette.html">Vignette</a></li><li><a href="VignetteEffect.html">VignetteEffect</a></li><li><a href="blend.html">blend</a></li><li><a href="outline.html">outline</a></li><li><a href="sepia.html">sepia</a></li></ul><h3>Global</h3><ul><li><a href="global.html#calculateBlurValues">calculateBlurValues</a></li><li><a href="global.html#computeGaussian">computeGaussian</a></li></ul>
+</nav>
+
+<br class="clear">
+
+<footer>
+    Documentation generated by <a href="https://github.com/jsdoc/jsdoc">JSDoc 4.0.4</a> on Sat Sep 27 2025 18:54:43 GMT+0900 (日本標準時)
+</footer>
+
+<script> prettyPrint(); </script>
+<script src="scripts/linenumber.js"> </script>
+</body>
+</html>

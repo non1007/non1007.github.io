@@ -1,0 +1,417 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <title>JSDoc: Source: PostEffect/posteffect-ssao.js</title>
+
+    <script src="scripts/prettify/prettify.js"> </script>
+    <script src="scripts/prettify/lang-css.js"> </script>
+    <!--[if lt IE 9]>
+      <script src="//html5shiv.googlecode.com/svn/trunk/html5.js"></script>
+    <![endif]-->
+    <link type="text/css" rel="stylesheet" href="styles/prettify-tomorrow.css">
+    <link type="text/css" rel="stylesheet" href="styles/jsdoc-default.css">
+</head>
+
+<body>
+
+<div id="main">
+
+    <h1 class="page-title">Source: PostEffect/posteffect-ssao.js</h1>
+
+    
+
+
+
+    
+    <section>
+        <article>
+            <pre class="prettyprint source linenums"><code>///&lt;reference path="/Users/sasakiwa/.vscode/extensions/playcanvas.playcanvas-0.2.2/node_modules/playcanvas/build/playcanvas.d.ts" />;
+// The implementation is based on the code in Filament Engine: https://github.com/google/filament
+// specifically, shaders here: https://github.com/google/filament/tree/24b88219fa6148b8004f230b377f163e6f184d65/filament/src/materials/ssao
+
+// --------------- POST EFFECT DEFINITION --------------- //
+/**
+ * @class
+ * @name SSAOEffect
+ * @classdesc 
+ * [EN] Implements the Screen Space Ambient Occlusion (SSAO) post-processing effect.  
+ * [JP] スクリーンスペース・アンビエントオクルージョン（SSAO）のポストエフェクトを実装します。  
+ *
+ * @param {GraphicsDevice} graphicsDevice - 
+ * [EN] The graphics device of the application.  
+ * [JP] アプリケーションの GraphicsDevice。  
+ *
+ * @param {any} ssaoScript - 
+ * [EN] The script using this effect.  
+ * [JP] このエフェクトを利用するスクリプト。  
+ *
+ * @augments PostEffect
+ */
+class SSAOEffect extends pc.PostEffect {
+    constructor(graphicsDevice, ssaoScript) {
+        super(graphicsDevice);
+        this.ssaoScript = ssaoScript;
+        this.needsDepthBuffer = true;
+
+        this.radius = 4;
+        this.brightness = 0;
+        this.samples = 20;
+        this.downscale = 1.0;
+
+        this._createShaders();
+    }
+
+    _createShaders() {
+        const attributes = { aPosition: pc.SEMANTIC_POSITION };
+
+        // SSAO フラグメントシェーダ
+        const fSsao = `
+            ${pc.ShaderChunks.get(this.device, pc.SHADERLANGUAGE_GLSL).get('screenDepthPS')}
+            varying vec2 vUv0;
+            uniform vec4 uResolution;
+            uniform float uAspect;
+            #define saturate(x) clamp(x,0.0,1.0)
+            uniform float uInvFarPlane;
+            uniform vec2 uSampleCount;
+            uniform float uSpiralTurns;
+            uniform vec2 uAngleIncCosSin;
+            uniform float uMaxLevel;
+            uniform float uInvRadiusSquared;
+            uniform float uMinHorizonAngleSineSquared;
+            uniform float uBias;
+            uniform float uPeak2;
+            uniform float uProjectionScaleRadius;
+            uniform float uIntensity;
+            uniform float uPower;
+
+            highp vec2 startPosition(const float noise) {
+                float angle = ((2.0 * 3.14159) * 2.4) * noise;
+                return vec2(cos(angle), sin(angle));
+            }
+
+            highp mat2 tapAngleStep() {
+                highp vec2 t = uAngleIncCosSin;
+                return mat2(t.x, t.y, -t.y, t.x);
+            }
+
+            vec3 computeViewSpacePositionFromDepth(highp vec2 uv, highp float linearDepth) {
+                return vec3((0.5 - uv) * vec2(uAspect, 1.0) * linearDepth, linearDepth);
+            }
+
+            highp vec3 faceNormal(highp vec3 dpdx, highp vec3 dpdy) {
+                return normalize(cross(dpdx, dpdy));
+            }
+
+            highp vec3 computeViewSpaceNormal(const highp vec3 position, const highp vec2 uv) {
+                highp vec2 uvdx = uv + vec2(uResolution.z, 0.0);
+                highp vec2 uvdy = uv + vec2(0.0, uResolution.w);
+                highp vec3 px = computeViewSpacePositionFromDepth(uvdx, -getLinearScreenDepth(uvdx));
+                highp vec3 py = computeViewSpacePositionFromDepth(uvdy, -getLinearScreenDepth(uvdy));
+                return faceNormal(px - position, py - position);
+            }
+
+            float random(const highp vec2 w) {
+                const vec3 m = vec3(0.06711056, 0.00583715, 52.9829189);
+                return fract(m.z * fract(dot(w, m.xy)));
+            }
+
+            void computeAmbientOcclusionSAO(inout float occlusion, float i, float ssDiskRadius,
+                    const highp vec2 uv, const highp vec3 origin, const vec3 normal,
+                    const vec2 tapPosition, const float noise) {
+                float radius = (i + noise + 0.5) * uSampleCount.y;
+                vec2 uvSamplePos = uv + ssDiskRadius * tapPosition * uResolution.zw;
+                float occlusionDepth = -getLinearScreenDepth(uvSamplePos);
+                vec3 p = computeViewSpacePositionFromDepth(uvSamplePos, occlusionDepth);
+                vec3 v = p - origin;
+                float vv = dot(v,v);
+                float vn = dot(v, normal);
+                float w = max(0.0, 1.0 - vv * uInvRadiusSquared);
+                w *= w;
+                w *= step(vv * uMinHorizonAngleSineSquared, vn * vn);
+                occlusion += w * max(0.0, vn + origin.z * uBias) / (vv + uPeak2);
+            }
+
+            float scalableAmbientObscurance(highp vec2 uv, highp vec3 origin, vec3 normal) {
+                float noise = random(gl_FragCoord.xy);
+                vec2 tapPosition = startPosition(noise);
+                mat2 angleStep = tapAngleStep();
+                float ssDiskRadius = -(uProjectionScaleRadius / origin.z);
+                float occlusion = 0.0;
+                for (float i = 0.0; i &lt; uSampleCount.x; i += 1.0) {
+                    computeAmbientOcclusionSAO(occlusion, i, ssDiskRadius, uv, origin, normal, tapPosition, noise);
+                    tapPosition = angleStep * tapPosition;
+                }
+                return sqrt(occlusion * uIntensity);
+            }
+
+            void main() {
+                highp vec2 uv = vUv0;
+                highp float depth = -getLinearScreenDepth(uv);
+                highp vec3 origin = computeViewSpacePositionFromDepth(uv, depth);
+                vec3 normal = computeViewSpaceNormal(origin, uv);
+                float occlusion = (uIntensity > 0.0) ? scalableAmbientObscurance(uv, origin, normal) : 0.0;
+                float aoVisibility = pow(saturate(1.0 - occlusion), uPower);
+                gl_FragColor.r = aoVisibility;
+            }
+        `;
+
+        // Blur フラグメント
+        const fblur = `
+            ${pc.ShaderChunks.get(this.device, pc.SHADERLANGUAGE_GLSL).get('screenDepthPS')}
+            varying vec2 vUv0;
+            uniform sampler2D uSSAOBuffer;
+            uniform vec4 uResolution;
+            uniform float uAspect;
+            uniform int uBilatSampleCount;
+            uniform float uFarPlaneOverEdgeDistance;
+            uniform float uBrightness;
+
+            float random(const highp vec2 w) {
+                const vec3 m = vec3(0.06711056, 0.00583715, 52.9829189);
+                return fract(m.z * fract(dot(w, m.xy)));
+            }
+
+            float bilateralWeight(in float depth, in float sampleDepth) {
+                float diff = (sampleDepth - depth) * uFarPlaneOverEdgeDistance;
+                return max(0.0, 1.0 - diff * diff);
+            }
+
+            void tap(inout float sum, inout float totalWeight, float weight, float depth, vec2 position) {
+                float ssao = texture2D(uSSAOBuffer, position).r;
+                float tdepth = -getLinearScreenDepth(position);
+                float bilateral = bilateralWeight(depth, tdepth);
+                bilateral *= weight;
+                sum += ssao * bilateral;
+                totalWeight += bilateral;
+            }
+
+            void main() {
+                highp vec2 uv = vUv0;
+                float depth = -getLinearScreenDepth(uv);
+                float totalWeight = 0.0;
+                float ssao = texture2D(uSSAOBuffer, uv).r;
+                float sum = ssao * totalWeight;
+                for (int x = -uBilatSampleCount; x &lt;= uBilatSampleCount; x++) {
+                    for (int y = -uBilatSampleCount; y &lt; uBilatSampleCount; y++) {
+                        float weight = 1.0;
+                        vec2 offset = vec2(x,y)*uResolution.zw;
+                        tap(sum, totalWeight, weight, depth, uv + offset);
+                    }
+                }
+                float ao = sum / totalWeight;
+                ao = mix(ao, 1.0, uBrightness);
+                gl_FragColor.a = ao;
+            }
+        `;
+
+        // Output フラグメント
+        const foutput = `
+            varying vec2 vUv0;
+            uniform sampler2D uColorBuffer;
+            uniform sampler2D uSSAOBuffer;
+            void main(void) {
+                vec4 inCol = texture2D(uColorBuffer, vUv0);
+                float ssao = texture2D(uSSAOBuffer, vUv0).a;
+                gl_FragColor.rgb = inCol.rgb * ssao;
+                gl_FragColor.a = inCol.a;
+            }
+        `;
+
+        // シェーダ作成
+        this.ssaoShader = pc.ShaderUtils.createShader(this.device, {
+            uniqueName: 'SsaoShader',
+            attributes,
+            vertexGLSL: pc.PostEffect.quadVertexShader,
+            fragmentGLSL: fSsao
+        });
+
+        this.blurShader = pc.ShaderUtils.createShader(this.device, {
+            uniqueName: 'SsaoBlurShader',
+            attributes,
+            vertexGLSL: pc.PostEffect.quadVertexShader,
+            fragmentGLSL: fblur
+        });
+
+        this.outputShader = pc.ShaderUtils.createShader(this.device, {
+            uniqueName: 'SsaoOutputShader',
+            attributes,
+            vertexGLSL: pc.PostEffect.quadVertexShader,
+            fragmentGLSL: foutput
+        });
+    }
+
+    _destroy() {
+        if (this.target) { this.target.destroyTextureBuffers(); this.target.destroy(); this.target = null; }
+        if (this.blurTarget) { this.blurTarget.destroyTextureBuffers(); this.blurTarget.destroy(); this.blurTarget = null; }
+    }
+
+    _resize(target) {
+        const width = Math.ceil(target.colorBuffer.width / this.downscale);
+        const height = Math.ceil(target.colorBuffer.height / this.downscale);
+        if (width === this.width &amp;&amp; height === this.height) return;
+        this.width = width;
+        this.height = height;
+        this._destroy();
+
+        const ssaoResultBuffer = new pc.Texture(this.device, {
+            format: pc.PIXELFORMAT_RGBA8, minFilter: pc.FILTER_LINEAR, magFilter: pc.FILTER_LINEAR,
+            addressU: pc.ADDRESS_CLAMP_TO_EDGE, addressV: pc.ADDRESS_CLAMP_TO_EDGE,
+            width: this.width, height: this.height, mipmaps: false
+        });
+        ssaoResultBuffer.name = 'SSAO Result';
+        this.target = new pc.RenderTarget({ name: 'SSAO Result Render Target', colorBuffer: ssaoResultBuffer, depth: false });
+
+        const ssaoBlurBuffer = new pc.Texture(this.device, {
+            format: pc.PIXELFORMAT_RGBA8, minFilter: pc.FILTER_LINEAR, magFilter: pc.FILTER_LINEAR,
+            addressU: pc.ADDRESS_CLAMP_TO_EDGE, addressV: pc.ADDRESS_CLAMP_TO_EDGE,
+            width: this.width, height: this.height, mipmaps: false
+        });
+        ssaoBlurBuffer.name = 'SSAO Blur';
+        this.blurTarget = new pc.RenderTarget({ name: 'SSAO Blur Render Target', colorBuffer: ssaoBlurBuffer, depth: false });
+    }
+
+    render(inputTarget, outputTarget, rect) {
+        this._resize(inputTarget);
+        const device = this.device;
+        const scope = device.scope;
+
+        const sampleCount = this.samples;
+        const spiralTurns = 10.0;
+        const step = (1.0 / (sampleCount - 0.5)) * spiralTurns * 2.0 * Math.PI;
+
+        const radius = this.radius;
+        const bias = 0.001;
+        const peak = 0.1 * radius;
+        const intensity = (peak * 2.0 * Math.PI) * 0.125;
+        const projectionScale = 0.5 * device.height;
+        const cameraFarClip = this.ssaoScript.entity.camera.farClip;
+
+        scope.resolve('uAspect').setValue(this.width / this.height);
+        scope.resolve('uResolution').setValue([this.width, this.height, 1.0 / this.width, 1.0 / this.height]);
+        scope.resolve('uBrightness').setValue(this.brightness);
+        scope.resolve('uInvFarPlane').setValue(1.0 / cameraFarClip);
+        scope.resolve('uSampleCount').setValue([sampleCount, 1.0 / sampleCount]);
+        scope.resolve('uSpiralTurns').setValue(spiralTurns);
+        scope.resolve('uAngleIncCosSin').setValue([Math.cos(step), Math.sin(step)]);
+        scope.resolve('uMaxLevel').setValue(0.0);
+        scope.resolve('uInvRadiusSquared').setValue(1.0 / (radius * radius));
+        scope.resolve('uMinHorizonAngleSineSquared').setValue(0.0);
+        scope.resolve('uBias').setValue(bias);
+        scope.resolve('uPeak2').setValue(peak * peak);
+        scope.resolve('uIntensity').setValue(intensity);
+        scope.resolve('uPower').setValue(1.0);
+        scope.resolve('uProjectionScaleRadius').setValue(projectionScale * radius);
+
+        // Render SSAO
+        this.drawQuad(this.target, this.ssaoShader, rect);
+
+        scope.resolve('uSSAOBuffer').setValue(this.target.colorBuffer);
+        scope.resolve('uFarPlaneOverEdgeDistance').setValue(1);
+        scope.resolve('uBilatSampleCount').setValue(4);
+
+        // Blur
+        this.drawQuad(this.blurTarget, this.blurShader, rect);
+
+        // Final output
+        scope.resolve('uSSAOBuffer').setValue(this.blurTarget.colorBuffer);
+        scope.resolve('uColorBuffer').setValue(inputTarget.colorBuffer);
+        this.drawQuad(outputTarget, this.outputShader, rect);
+    }
+}
+
+// ----------------- SCRIPT DEFINITION ------------------ //
+/**
+ * @class
+ * @name SSAO
+ * @classdesc 
+ * [EN] Script component to use SSAOEffect in the PlayCanvas Editor.  
+ * [JP] PlayCanvas エディタで SSAOEffect を利用するためのスクリプトコンポーネント。  
+ */
+var SSAO = pc.createScript('ssao');
+
+SSAO.attributes.add('radius', {
+    type: 'number',
+    default: 4,
+    min: 0,
+    max: 20,
+    title: 'Radius / 半径',
+    description: 'EN: Sampling radius in view space. / JP: ビュー空間におけるサンプリング半径。'
+});
+
+SSAO.attributes.add('brightness', {
+    type: 'number',
+    default: 0,
+    min: 0,
+    max: 1,
+    title: 'Brightness / 明るさ',
+    description: 'EN: Blend factor to reduce SSAO darkness. / JP: SSAO の暗さを和らげるためのブレンド係数。'
+});
+
+SSAO.attributes.add('samples', {
+    type: 'number',
+    default: 16,
+    min: 1,
+    max: 256,
+    title: 'Samples / サンプル数',
+    description: 'EN: Number of spiral sampling points. / JP: スパイラルサンプリングのサンプル数。'
+});
+
+SSAO.attributes.add('downscale', {
+    type: 'number',
+    default: 1,
+    min: 1,
+    max: 4,
+    title: 'Downscale / ダウンスケール',
+    description: 'EN: Resolution downscale factor for performance. / JP: パフォーマンス向上のための解像度縮小係数。'
+});
+
+SSAO.prototype.initialize = function () {
+    this.effect = new SSAOEffect(this.app.graphicsDevice, this);
+    this.effect.radius = this.radius;
+    this.effect.brightness = this.brightness;
+    this.effect.samples = this.samples;
+    this.effect.downscale = this.downscale;
+
+    this.on('attr', function (name, value) {
+        this.effect[name] = value;
+    }, this);
+
+    const queue = this.entity.camera.postEffects;
+    queue.addEffect(this.effect);
+
+    this.on('state', function (enabled) {
+        if (enabled) {
+            queue.addEffect(this.effect);
+        } else {
+            queue.removeEffect(this.effect);
+        }
+    });
+
+    this.on('destroy', function () {
+        queue.removeEffect(this.effect);
+        this.effect._destroy();
+    });
+};</code></pre>
+        </article>
+    </section>
+
+
+
+
+</div>
+
+<nav>
+    <h2><a href="index.html">Home</a></h2><h3>Classes</h3><ul><li><a href="BlendEffect.html">BlendEffect</a></li><li><a href="Bloom.html">Bloom</a></li><li><a href="BloomEffect.html">BloomEffect</a></li><li><a href="Bokeh.html">Bokeh</a></li><li><a href="BokehEffect.html">BokehEffect</a></li><li><a href="BrightnessContrast.html">BrightnessContrast</a></li><li><a href="BrightnessContrastEffect.html">BrightnessContrastEffect</a></li><li><a href="EdgeDetect.html">EdgeDetect</a></li><li><a href="EdgeDetectEffect.html">EdgeDetectEffect</a></li><li><a href="Fxaa.html">Fxaa</a></li><li><a href="FxaaEffect.html">FxaaEffect</a></li><li><a href="G2Toonshader.html">G2Toonshader</a></li><li><a href="HorizontalTiltShift.html">HorizontalTiltShift</a></li><li><a href="HorizontalTiltShiftEffect.html">HorizontalTiltShiftEffect</a></li><li><a href="HueSaturation.html">HueSaturation</a></li><li><a href="HueSaturationEffect.html">HueSaturationEffect</a></li><li><a href="Luminosity.html">Luminosity</a></li><li><a href="LuminosityEffect.html">LuminosityEffect</a></li><li><a href="OutlinePostEffect.html">OutlinePostEffect</a></li><li><a href="SSAO.html">SSAO</a></li><li><a href="SSAOEffect.html">SSAOEffect</a></li><li><a href="SepiaEffect.html">SepiaEffect</a></li><li><a href="VerticalTiltShift.html">VerticalTiltShift</a></li><li><a href="VerticalTiltShiftEffect.html">VerticalTiltShiftEffect</a></li><li><a href="Vignette.html">Vignette</a></li><li><a href="VignetteEffect.html">VignetteEffect</a></li><li><a href="blend.html">blend</a></li><li><a href="outline.html">outline</a></li><li><a href="sepia.html">sepia</a></li></ul><h3>Global</h3><ul><li><a href="global.html#calculateBlurValues">calculateBlurValues</a></li><li><a href="global.html#computeGaussian">computeGaussian</a></li></ul>
+</nav>
+
+<br class="clear">
+
+<footer>
+    Documentation generated by <a href="https://github.com/jsdoc/jsdoc">JSDoc 4.0.4</a> on Sat Sep 27 2025 18:54:43 GMT+0900 (日本標準時)
+</footer>
+
+<script> prettyPrint(); </script>
+<script src="scripts/linenumber.js"> </script>
+</body>
+</html>

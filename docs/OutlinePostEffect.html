@@ -1,0 +1,421 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <title>JSDoc: Class: OutlinePostEffect</title>
+
+    <script src="scripts/prettify/prettify.js"> </script>
+    <script src="scripts/prettify/lang-css.js"> </script>
+    <!--[if lt IE 9]>
+      <script src="//html5shiv.googlecode.com/svn/trunk/html5.js"></script>
+    <![endif]-->
+    <link type="text/css" rel="stylesheet" href="styles/prettify-tomorrow.css">
+    <link type="text/css" rel="stylesheet" href="styles/jsdoc-default.css">
+</head>
+
+<body>
+
+<div id="main">
+
+    <h1 class="page-title">Class: OutlinePostEffect</h1>
+
+    
+
+
+
+
+<section>
+
+<header>
+    
+        <h2><span class="attribs"><span class="type-signature"></span></span>OutlinePostEffect<span class="signature">(device)</span><span class="type-signature"></span></h2>
+        
+            <div class="class-description">[EN] Post effect that draws outlines around objects using depth buffer.  
+[JP] 深度バッファを用いてオブジェクトにアウトラインを描画するポストエフェクト。</div>
+        
+    
+</header>
+
+<article>
+    <div class="container-overview">
+    
+        
+
+    
+    <h2>Constructor</h2>
+    
+
+    
+    <h4 class="name" id="OutlinePostEffect"><span class="type-signature"></span>new OutlinePostEffect<span class="signature">(device)</span><span class="type-signature"></span></h4>
+    
+
+    
+
+
+
+<div class="description">
+    [EN] This effect detects edges by comparing depth differences of neighboring pixels.  
+Useful for highlighting 3D models or gameplay elements.  
+
+[JP] 隣接するピクセルの深度差を比較して輪郭を検出し、アウトラインを描画します。  
+キャラクターやアイテムの強調表示などに利用できます。
+
+Usage / 使用例:
+```javascript
+var effect = new OutlinePostEffect(app.graphicsDevice);
+effect.outlineThickness = 2.0;
+effect.outlineColor = [1, 0, 0]; // 赤いアウトライン
+cameraEntity.camera.postEffects.addEffect(effect);
+```
+</div>
+
+
+
+
+
+
+
+
+
+    <h5>Parameters:</h5>
+    
+
+<table class="params">
+    <thead>
+    <tr>
+        
+        <th>Name</th>
+        
+
+        <th>Type</th>
+
+        
+
+        
+
+        <th class="last">Description</th>
+    </tr>
+    </thead>
+
+    <tbody>
+    
+
+        <tr>
+            
+                <td class="name"><code>device</code></td>
+            
+
+            <td class="type">
+            
+                
+<span class="param-type">GraphicsDevice</span>
+
+
+            
+            </td>
+
+            
+
+            
+
+            <td class="description last">[EN] The graphics device, usually `app.graphicsDevice`.  
+[JP] 利用中の GraphicsDevice。通常は `app.graphicsDevice` を渡します。</td>
+        </tr>
+
+    
+    </tbody>
+</table>
+
+
+
+
+
+
+    <h5 class="subsection-title">Properties:</h5>
+
+    
+
+<table class="props">
+    <thead>
+    <tr>
+        
+        <th>Name</th>
+        
+
+        <th>Type</th>
+
+        
+
+        
+
+        <th class="last">Description</th>
+    </tr>
+    </thead>
+
+    <tbody>
+    
+
+        <tr>
+            
+                <td class="name"><code>outlineThickness</code></td>
+            
+
+            <td class="type">
+            
+                
+<span class="param-type">number</span>
+
+
+            
+            </td>
+
+            
+
+            
+
+            <td class="description last">[EN] Outline thickness in pixels.  
+[JP] アウトラインの太さ（ピクセル単位）。</td>
+        </tr>
+
+    
+
+        <tr>
+            
+                <td class="name"><code>outlineColor</code></td>
+            
+
+            <td class="type">
+            
+                
+<span class="param-type">Array.&lt;number></span>
+
+
+            
+            </td>
+
+            
+
+            
+
+            <td class="description last">[EN] Outline color in RGB (array of 3 floats).  
+[JP] アウトラインの描画色（RGB配列、0〜1の値）。</td>
+        </tr>
+
+    
+
+        <tr>
+            
+                <td class="name"><code>outlineDepthThreshold</code></td>
+            
+
+            <td class="type">
+            
+                
+<span class="param-type">number</span>
+
+
+            
+            </td>
+
+            
+
+            
+
+            <td class="description last">[EN] Minimum depth difference to trigger outline detection.  
+[JP] 輪郭を検出するための深度差のしきい値。</td>
+        </tr>
+
+    
+
+        <tr>
+            
+                <td class="name"><code>nearClip</code></td>
+            
+
+            <td class="type">
+            
+                
+<span class="param-type">number</span>
+
+
+            
+            </td>
+
+            
+
+            
+
+            <td class="description last">[EN] Near clipping plane of the camera.  
+[JP] カメラのニアクリップ距離。</td>
+        </tr>
+
+    
+
+        <tr>
+            
+                <td class="name"><code>farClip</code></td>
+            
+
+            <td class="type">
+            
+                
+<span class="param-type">number</span>
+
+
+            
+            </td>
+
+            
+
+            
+
+            <td class="description last">[EN] Far clipping plane of the camera.  
+[JP] カメラのファークリップ距離。</td>
+        </tr>
+
+    
+
+        <tr>
+            
+                <td class="name"><code>maxOutlineDistance</code></td>
+            
+
+            <td class="type">
+            
+                
+<span class="param-type">number</span>
+
+
+            
+            </td>
+
+            
+
+            
+
+            <td class="description last">[EN] Maximum distance where outline is visible (fades beyond this).  
+[JP] アウトラインが表示される最大距離（これを超えるとフェードアウト）。</td>
+        </tr>
+
+    
+    </tbody>
+</table>
+
+
+
+
+<dl class="details">
+
+    
+
+    
+
+    
+
+    
+
+    
+
+    
+
+    
+
+    
+
+    
+
+    
+
+    
+
+    
+
+    
+    <dt class="tag-source">Source:</dt>
+    <dd class="tag-source"><ul class="dummy"><li>
+        <a href="PostEffect_posteffect-outline.js.html">PostEffect/posteffect-outline.js</a>, <a href="PostEffect_posteffect-outline.js.html#line3">line 3</a>
+    </li></ul></dd>
+    
+
+    
+
+    
+
+    
+</dl>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+    
+    </div>
+
+    
+        <h3 class="subsection-title">Extends</h3>
+
+        
+
+
+    <ul>
+        <li>PostEffect</li>
+    </ul>
+
+
+    
+
+    
+
+    
+
+    
+
+    
+
+    
+
+    
+
+    
+
+    
+
+    
+</article>
+
+</section>
+
+
+
+
+</div>
+
+<nav>
+    <h2><a href="index.html">Home</a></h2><h3>Classes</h3><ul><li><a href="BlendEffect.html">BlendEffect</a></li><li><a href="Bloom.html">Bloom</a></li><li><a href="BloomEffect.html">BloomEffect</a></li><li><a href="Bokeh.html">Bokeh</a></li><li><a href="BokehEffect.html">BokehEffect</a></li><li><a href="BrightnessContrast.html">BrightnessContrast</a></li><li><a href="BrightnessContrastEffect.html">BrightnessContrastEffect</a></li><li><a href="EdgeDetect.html">EdgeDetect</a></li><li><a href="EdgeDetectEffect.html">EdgeDetectEffect</a></li><li><a href="Fxaa.html">Fxaa</a></li><li><a href="FxaaEffect.html">FxaaEffect</a></li><li><a href="G2Toonshader.html">G2Toonshader</a></li><li><a href="HorizontalTiltShift.html">HorizontalTiltShift</a></li><li><a href="HorizontalTiltShiftEffect.html">HorizontalTiltShiftEffect</a></li><li><a href="HueSaturation.html">HueSaturation</a></li><li><a href="HueSaturationEffect.html">HueSaturationEffect</a></li><li><a href="Luminosity.html">Luminosity</a></li><li><a href="LuminosityEffect.html">LuminosityEffect</a></li><li><a href="OutlinePostEffect.html">OutlinePostEffect</a></li><li><a href="SSAO.html">SSAO</a></li><li><a href="SSAOEffect.html">SSAOEffect</a></li><li><a href="SepiaEffect.html">SepiaEffect</a></li><li><a href="VerticalTiltShift.html">VerticalTiltShift</a></li><li><a href="VerticalTiltShiftEffect.html">VerticalTiltShiftEffect</a></li><li><a href="Vignette.html">Vignette</a></li><li><a href="VignetteEffect.html">VignetteEffect</a></li><li><a href="blend.html">blend</a></li><li><a href="outline.html">outline</a></li><li><a href="sepia.html">sepia</a></li></ul><h3>Global</h3><ul><li><a href="global.html#calculateBlurValues">calculateBlurValues</a></li><li><a href="global.html#computeGaussian">computeGaussian</a></li></ul>
+</nav>
+
+<br class="clear">
+
+<footer>
+    Documentation generated by <a href="https://github.com/jsdoc/jsdoc">JSDoc 4.0.4</a> on Sat Sep 27 2025 18:54:43 GMT+0900 (日本標準時)
+</footer>
+
+<script> prettyPrint(); </script>
+<script src="scripts/linenumber.js"> </script>
+</body>
+</html>

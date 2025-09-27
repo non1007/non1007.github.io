@@ -1,0 +1,291 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <title>JSDoc: Source: PostEffect/posteffect-bokeh.js</title>
+
+    <script src="scripts/prettify/prettify.js"> </script>
+    <script src="scripts/prettify/lang-css.js"> </script>
+    <!--[if lt IE 9]>
+      <script src="//html5shiv.googlecode.com/svn/trunk/html5.js"></script>
+    <![endif]-->
+    <link type="text/css" rel="stylesheet" href="styles/prettify-tomorrow.css">
+    <link type="text/css" rel="stylesheet" href="styles/jsdoc-default.css">
+</head>
+
+<body>
+
+<div id="main">
+
+    <h1 class="page-title">Source: PostEffect/posteffect-bokeh.js</h1>
+
+    
+
+
+
+    
+    <section>
+        <article>
+            <pre class="prettyprint source linenums"><code>///&lt;reference path="/Users/sasakiwa/.vscode/extensions/playcanvas.playcanvas-0.2.2/node_modules/playcanvas/build/playcanvas.d.ts" />;
+// --------------- POST EFFECT DEFINITION --------------- //
+/**
+ * @class
+ * @name BokehEffect
+ * @classdesc Implements a Depth of Field (DoF) post-processing effect with Bokeh blur.
+ * @description Creates a new instance of the Bokeh post effect.
+ * @augments pc.PostEffect
+ * @param {pc.GraphicsDevice} graphicsDevice - The graphics device of the application.
+ * @property {number} maxBlur - EN: Maximum blur amount (0–1). JP: 最大ぼかし量（0〜1の範囲）。
+ * @property {number} aperture - EN: Aperture size; larger values create a shallower depth of field. JP: 絞り値。大きくすると被写界深度が浅くなります。
+ * @property {number} focus - EN: Focus distance for the effect. JP: 効果の焦点距離。
+ */
+class BokehEffect extends pc.PostEffect {
+    constructor(graphicsDevice) {
+        super(graphicsDevice);
+
+        // We need a depth buffer to compute CoC
+        this.needsDepthBuffer = true;
+
+        // default properties (these are public and will be set by the Script)
+        this.maxBlur = 0.02;   // 0..1 (normalized) by default — converted to pixel radius in render()
+        this.aperture = 1.0;   // aperture multiplier
+        this.focus = 1.0;      // focus distance (scene units)
+        // camera near/far will be set from the script each frame:
+        this._cameraNear = 0.1;
+        this._cameraFar = 1000.0;
+
+        // Build shader
+        const fshader = `
+            varying vec2 vUv0;
+
+            uniform sampler2D uColorBuffer;
+            uniform sampler2D uSceneDepthMap;
+
+            uniform vec2 uResolution;   // px
+            uniform float uFocusDepth;  // scene units
+            uniform float uAperture;
+            uniform float uMaxBlur;     // px
+
+            uniform float uCameraNear;
+            uniform float uCameraFar;
+
+            // convert depth texture sample to linear view depth (world/scene units)
+            float getLinearDepth(vec2 uv) {
+                float z = texture2D(uSceneDepthMap, uv).r;
+                float z_n = z * 2.0 - 1.0;
+                return (2.0 * uCameraNear * uCameraFar) /
+                    (uCameraFar + uCameraNear - z_n * (uCameraFar - uCameraNear));
+            }
+
+            void main(void) {
+                vec2 uv = vUv0;
+
+                float depth = getLinearDepth(uv);
+
+                // Circle of Confusion (0..1)
+                float coc = clamp(abs(depth - uFocusDepth) * uAperture, 0.0, 1.0);
+
+                // radius in pixels
+                float radius = coc * uMaxBlur;
+
+                // If radius is tiny, just sample center (fast path)
+                if (radius &lt; 0.5) {
+                    vec3 c = texture2D(uColorBuffer, uv).rgb;
+                    gl_FragColor = vec4(c, 1.0);
+                    return;
+                }
+
+                // Circle sampling (uniform angle)
+                const int SAMPLES = 32; // 16..64 : balance quality/perf
+                vec3 col = vec3(0.0);
+
+                // convert pixel radius -> uv offset
+                vec2 pixelToUv = 1.0 / uResolution;
+                for (int i = 0; i &lt; SAMPLES; i++) {
+                    float angle = 6.2831853 * float(i) / float(SAMPLES);
+                    vec2 offset = vec2(cos(angle), sin(angle)) * radius * pixelToUv;
+                    col += texture2D(uColorBuffer, uv + offset).rgb;
+                }
+
+                col /= float(SAMPLES);
+
+                gl_FragColor = vec4(col, 1.0);
+            }
+        `;
+
+        this.shader = pc.ShaderUtils.createShader(graphicsDevice, {
+            uniqueName: 'BokehShader_v2',
+            attributes: { aPosition: pc.SEMANTIC_POSITION },
+            vertexGLSL: pc.PostEffect.quadVertexShader,
+            fragmentGLSL: fshader
+        });
+    }
+
+    // Allow external code (script) to set camera near/far each frame
+    set cameraNear(val) { this._cameraNear = val; }
+    set cameraFar(val) { this._cameraFar = val; }
+
+    render(inputTarget, outputTarget, rect) {
+        const scope = this.device.scope;
+
+        // resolution
+        scope.resolve('uResolution').setValue([this.device.width, this.device.height]);
+
+        // focus depth
+        scope.resolve('uFocusDepth').setValue(this.focus);
+
+        // aperture
+        scope.resolve('uAperture').setValue(this.aperture);
+
+        // Convert normalized maxBlur (0..1) into pixel radius.
+        // Tweak the multiplier (here 80) to taste — larger = stronger maximum blur.
+        // If you prefer to supply px directly, set this.maxBlur to px and skip scaling.
+        const maxBlurPx = Math.max(1.0, this.maxBlur * 80.0);
+        scope.resolve('uMaxBlur').setValue(maxBlurPx);
+
+        // Bind color buffer (input of post effect)
+        scope.resolve('uColorBuffer').setValue(inputTarget.colorBuffer);
+
+        // Bind depth buffer explicitly (engine often provides uSceneDepthMap automatically,
+        // but setting it explicitly is safer)
+        if (inputTarget.depthBuffer) {
+            scope.resolve('uSceneDepthMap').setValue(inputTarget.depthBuffer);
+        }
+
+        // Set camera near/far so the shader can linearize depth
+        scope.resolve('uCameraNear').setValue(this._cameraNear);
+        scope.resolve('uCameraFar').setValue(this._cameraFar);
+
+        this.drawQuad(outputTarget, this.shader, rect);
+    }
+}
+
+// ----------------- SCRIPT DEFINITION ------------------ //
+/**
+ * @class Bokeh
+ * @classdesc
+ * [EN] PlayCanvas script that applies the BokehEffect as a camera post-processing effect.  
+ * [JP] PlayCanvas カメラに BokehEffect を適用するスクリプトコンポーネント
+ *
+ * @property {number} maxBlur
+ * [EN] Maximum blur amount (0–1). / JP: ぼかしの最大量（0〜1の範囲）。
+ * @property {number} aperture
+ * [EN] Aperture size; larger values create a shallower depth of field. / JP: 絞り値。大きいほど被写界深度が浅くなります。
+ * @property {number} focus
+ * [EN] Focus distance of the effect. / JP: 効果の焦点距離を制御します。
+ * @property {number} qualitySamples
+ * [EN] Number of samples used for Bokeh blur. / JP: Bokeh ぼかしに使用するサンプル数（シェーダー内の定数 SAMPLES はランタイムでは変更不可）。
+ */
+var Bokeh = pc.createScript('bokeh');
+
+Bokeh.attributes.add('maxBlur', {
+    type: 'number',
+    default: 0.02,
+    min: 0,
+    max: 1,
+    title: 'Max Blur / 最大ぼかし',
+    description: 'EN: Maximum blur amount (0–1). / JP: ぼかしの最大量（0〜1の範囲）。'
+});
+
+Bokeh.attributes.add('aperture', {
+    type: 'number',
+    default: 1,
+    min: 0,
+    max: 1,
+    title: 'Aperture / 絞り',
+    description: 'EN: Aperture size. Larger values create a shallower depth of field. / JP: 絞り値。大きいほど被写界深度が浅くなります。'
+});
+
+Bokeh.attributes.add('focus', {
+    type: 'number',
+    default: 1,
+    title: 'Focus / 焦点距離',
+    description: 'EN: Focus distance of the effect. / JP: 効果の焦点距離を制御します。'
+});
+
+Bokeh.attributes.add('qualitySamples', {
+    type: 'number',
+    default: 32,
+    title: 'Samples (shader SAMPLES constant not runtime changeable)',
+    description: 'Note: To actually change SAMPLES in shader, edit the shader const int SAMPLES value.'
+});
+
+Bokeh.prototype.initialize = function() {
+    this.effect = new BokehEffect(this.app.graphicsDevice);
+
+    // initialize effect properties from script attributes
+    this.effect.maxBlur = this.maxBlur;
+    this.effect.aperture = this.aperture;
+    this.effect.focus = this.focus;
+
+    // add to the camera's post effect queue
+    var queue = this.entity.camera.postEffects;
+    queue.addEffect(this.effect);
+
+    // keep camera near/far up-to-date each frame in update()
+    // Also keep effect properties in sync if changed from inspector
+    this._prevMaxBlur = this.maxBlur;
+    this._prevAperture = this.aperture;
+    this._prevFocus = this.focus;
+};
+
+Bokeh.prototype.update = function(dt) {
+    // sync parameters if changed in inspector at runtime
+    if (this._prevMaxBlur !== this.maxBlur) {
+        this.effect.maxBlur = this.maxBlur;
+        this._prevMaxBlur = this.maxBlur;
+    }
+    if (this._prevAperture !== this.aperture) {
+        this.effect.aperture = this.aperture;
+        this._prevAperture = this.aperture;
+    }
+    if (this._prevFocus !== this.focus) {
+        this.effect.focus = this.focus;
+        this._prevFocus = this.focus;
+    }
+
+    // update camera near/far for shader
+    if (this.entity &amp;&amp; this.entity.camera) {
+        this.effect.cameraNear = this.entity.camera.nearClip;
+        this.effect.cameraFar = this.entity.camera.farClip;
+    }
+};
+
+Bokeh.prototype.onEnable = function() {
+    // Ensure the effect is in queue when script enabled
+    this.entity.camera.postEffects.addEffect(this.effect);
+};
+
+Bokeh.prototype.onDisable = function() {
+    // Remove when disabled
+    this.entity.camera.postEffects.removeEffect(this.effect);
+};
+
+Bokeh.prototype.onDestroy = function() {
+    // Cleanup
+    this.entity.camera.postEffects.removeEffect(this.effect);
+};
+
+</code></pre>
+        </article>
+    </section>
+
+
+
+
+</div>
+
+<nav>
+    <h2><a href="index.html">Home</a></h2><h3>Classes</h3><ul><li><a href="BlendEffect.html">BlendEffect</a></li><li><a href="Bloom.html">Bloom</a></li><li><a href="BloomEffect.html">BloomEffect</a></li><li><a href="Bokeh.html">Bokeh</a></li><li><a href="BokehEffect.html">BokehEffect</a></li><li><a href="BrightnessContrast.html">BrightnessContrast</a></li><li><a href="BrightnessContrastEffect.html">BrightnessContrastEffect</a></li><li><a href="EdgeDetect.html">EdgeDetect</a></li><li><a href="EdgeDetectEffect.html">EdgeDetectEffect</a></li><li><a href="Fxaa.html">Fxaa</a></li><li><a href="FxaaEffect.html">FxaaEffect</a></li><li><a href="G2Toonshader.html">G2Toonshader</a></li><li><a href="HorizontalTiltShift.html">HorizontalTiltShift</a></li><li><a href="HorizontalTiltShiftEffect.html">HorizontalTiltShiftEffect</a></li><li><a href="HueSaturation.html">HueSaturation</a></li><li><a href="HueSaturationEffect.html">HueSaturationEffect</a></li><li><a href="Luminosity.html">Luminosity</a></li><li><a href="LuminosityEffect.html">LuminosityEffect</a></li><li><a href="OutlinePostEffect.html">OutlinePostEffect</a></li><li><a href="SSAO.html">SSAO</a></li><li><a href="SSAOEffect.html">SSAOEffect</a></li><li><a href="SepiaEffect.html">SepiaEffect</a></li><li><a href="VerticalTiltShift.html">VerticalTiltShift</a></li><li><a href="VerticalTiltShiftEffect.html">VerticalTiltShiftEffect</a></li><li><a href="Vignette.html">Vignette</a></li><li><a href="VignetteEffect.html">VignetteEffect</a></li><li><a href="blend.html">blend</a></li><li><a href="outline.html">outline</a></li><li><a href="sepia.html">sepia</a></li></ul><h3>Global</h3><ul><li><a href="global.html#calculateBlurValues">calculateBlurValues</a></li><li><a href="global.html#computeGaussian">computeGaussian</a></li></ul>
+</nav>
+
+<br class="clear">
+
+<footer>
+    Documentation generated by <a href="https://github.com/jsdoc/jsdoc">JSDoc 4.0.4</a> on Sat Sep 27 2025 18:54:43 GMT+0900 (日本標準時)
+</footer>
+
+<script> prettyPrint(); </script>
+<script src="scripts/linenumber.js"> </script>
+</body>
+</html>

@@ -1,0 +1,182 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <title>JSDoc: Source: PostEffect/posteffect-fxaa.js</title>
+
+    <script src="scripts/prettify/prettify.js"> </script>
+    <script src="scripts/prettify/lang-css.js"> </script>
+    <!--[if lt IE 9]>
+      <script src="//html5shiv.googlecode.com/svn/trunk/html5.js"></script>
+    <![endif]-->
+    <link type="text/css" rel="stylesheet" href="styles/prettify-tomorrow.css">
+    <link type="text/css" rel="stylesheet" href="styles/jsdoc-default.css">
+</head>
+
+<body>
+
+<div id="main">
+
+    <h1 class="page-title">Source: PostEffect/posteffect-fxaa.js</h1>
+
+    
+
+
+
+    
+    <section>
+        <article>
+            <pre class="prettyprint source linenums"><code>///&lt;reference path="/Users/sasakiwa/.vscode/extensions/playcanvas.playcanvas-0.2.2/node_modules/playcanvas/build/playcanvas.d.ts" />;
+// --------------- POST EFFECT DEFINITION --------------- //
+/**
+ * @class
+ * @name FxaaEffect
+ * @classdesc Implements the FXAA (Fast Approximate Anti-Aliasing) post effect by NVIDIA.
+ * [EN] Applies screen-space edge smoothing to reduce aliasing artifacts.  
+ * [JP] NVIDIA による FXAA ポストエフェクトを実装します。  
+ *      画面上のエッジを滑らかにし、ジャギーを軽減します。
+ *
+ * @description
+ * [EN] Creates a new instance of the FXAA post effect.  
+ * [JP] FXAA ポストエフェクトの新しいインスタンスを生成します。
+ *
+ * @augments PostEffect
+ * @param {GraphicsDevice} graphicsDevice
+ * [EN] The graphics device of the application.  
+ * [JP] アプリケーションの GraphicsDevice。
+ */
+class FxaaEffect extends pc.PostEffect {
+    constructor(graphicsDevice) {
+        super(graphicsDevice);
+
+        // Shaders
+        const fxaaFrag = `
+            uniform sampler2D uColorBuffer;
+            uniform vec2 uResolution;
+
+            #define FXAA_REDUCE_MIN   (1.0/128.0)
+            #define FXAA_REDUCE_MUL   (1.0/8.0)
+            #define FXAA_SPAN_MAX     8.0
+
+            void main() {
+                vec3 rgbNW = texture2D(uColorBuffer, (gl_FragCoord.xy + vec2(-1.0, -1.0)) * uResolution).xyz;
+                vec3 rgbNE = texture2D(uColorBuffer, (gl_FragCoord.xy + vec2( 1.0, -1.0)) * uResolution).xyz;
+                vec3 rgbSW = texture2D(uColorBuffer, (gl_FragCoord.xy + vec2(-1.0,  1.0)) * uResolution).xyz;
+                vec3 rgbSE = texture2D(uColorBuffer, (gl_FragCoord.xy + vec2( 1.0,  1.0)) * uResolution).xyz;
+                vec4 rgbaM  = texture2D(uColorBuffer, gl_FragCoord.xy * uResolution);
+                vec3 rgbM = rgbaM.xyz;
+                float opacity = rgbaM.w;
+
+                vec3 luma = vec3(0.299, 0.587, 0.114);
+
+                float lumaNW = dot(rgbNW, luma);
+                float lumaNE = dot(rgbNE, luma);
+                float lumaSW = dot(rgbSW, luma);
+                float lumaSE = dot(rgbSE, luma);
+                float lumaM  = dot(rgbM, luma);
+                float lumaMin = min(lumaM, min(min(lumaNW, lumaNE), min(lumaSW, lumaSE)));
+                float lumaMax = max(lumaM, max(max(lumaNW, lumaNE), max(lumaSW, lumaSE)));
+
+                vec2 dir;
+                dir.x = -((lumaNW + lumaNE) - (lumaSW + lumaSE));
+                dir.y =  ((lumaNW + lumaSW) - (lumaNE + lumaSE));
+
+                float dirReduce = max((lumaNW + lumaNE + lumaSW + lumaSE) * (0.25 * FXAA_REDUCE_MUL), FXAA_REDUCE_MIN);
+                float rcpDirMin = 1.0 / (min(abs(dir.x), abs(dir.y)) + dirReduce);
+                dir = min(vec2(FXAA_SPAN_MAX), max(vec2(-FXAA_SPAN_MAX), dir * rcpDirMin)) * uResolution;
+
+                vec3 rgbA = 0.5 * (
+                    texture2D(uColorBuffer, gl_FragCoord.xy * uResolution + dir * (1.0/3.0 - 0.5)).xyz +
+                    texture2D(uColorBuffer, gl_FragCoord.xy * uResolution + dir * (2.0/3.0 - 0.5)).xyz
+                );
+
+                vec3 rgbB = rgbA * 0.5 + 0.25 * (
+                    texture2D(uColorBuffer, gl_FragCoord.xy * uResolution + dir * -0.5).xyz +
+                    texture2D(uColorBuffer, gl_FragCoord.xy * uResolution + dir * 0.5).xyz
+                );
+
+                float lumaB = dot(rgbB, luma);
+
+                if (lumaB &lt; lumaMin || lumaB > lumaMax) {
+                    gl_FragColor = vec4(rgbA, opacity);
+                } else {
+                    gl_FragColor = vec4(rgbB, opacity);
+                }
+            }
+        `;
+
+        this.fxaaShader = pc.ShaderUtils.createShader(graphicsDevice, {
+            uniqueName: 'FxaaShader',
+            attributes: { aPosition: pc.SEMANTIC_POSITION },
+            vertexGLSL: pc.PostEffect.quadVertexShader,
+            fragmentGLSL: fxaaFrag
+        });
+
+        // Uniforms
+        this.resolution = new Float32Array(2);
+    }
+
+    render(inputTarget, outputTarget, rect) {
+        const device = this.device;
+        const scope = device.scope;
+
+        this.resolution[0] = 1 / inputTarget.width;
+        this.resolution[1] = 1 / inputTarget.height;
+
+        scope.resolve('uResolution').setValue(this.resolution);
+        scope.resolve('uColorBuffer').setValue(inputTarget.colorBuffer);
+
+        this.drawQuad(outputTarget, this.fxaaShader, rect);
+    }
+}
+
+// ----------------- SCRIPT DEFINITION ------------------ //
+/**
+ * @class
+ * @name Fxaa
+ * @classdesc PlayCanvas script wrapper for {@link FxaaEffect}.
+ * [EN] Script component to use FxaaEffect in the PlayCanvas Editor.  
+ * [JP] PlayCanvas エディタで FxaaEffect を利用するためのスクリプトコンポーネント。
+ */
+var Fxaa = pc.createScript('fxaa');
+
+Fxaa.prototype.initialize = function () {
+    this.effect = new FxaaEffect(this.app.graphicsDevice);
+
+    const queue = this.entity.camera.postEffects;
+    queue.addEffect(this.effect);
+
+    this.on('state', function (enabled) {
+        if (enabled) {
+            queue.addEffect(this.effect);
+        } else {
+            queue.removeEffect(this.effect);
+        }
+    });
+
+    this.on('destroy', function () {
+        queue.removeEffect(this.effect);
+    });
+};</code></pre>
+        </article>
+    </section>
+
+
+
+
+</div>
+
+<nav>
+    <h2><a href="index.html">Home</a></h2><h3>Classes</h3><ul><li><a href="BlendEffect.html">BlendEffect</a></li><li><a href="Bloom.html">Bloom</a></li><li><a href="BloomEffect.html">BloomEffect</a></li><li><a href="Bokeh.html">Bokeh</a></li><li><a href="BokehEffect.html">BokehEffect</a></li><li><a href="BrightnessContrast.html">BrightnessContrast</a></li><li><a href="BrightnessContrastEffect.html">BrightnessContrastEffect</a></li><li><a href="EdgeDetect.html">EdgeDetect</a></li><li><a href="EdgeDetectEffect.html">EdgeDetectEffect</a></li><li><a href="Fxaa.html">Fxaa</a></li><li><a href="FxaaEffect.html">FxaaEffect</a></li><li><a href="G2Toonshader.html">G2Toonshader</a></li><li><a href="HorizontalTiltShift.html">HorizontalTiltShift</a></li><li><a href="HorizontalTiltShiftEffect.html">HorizontalTiltShiftEffect</a></li><li><a href="HueSaturation.html">HueSaturation</a></li><li><a href="HueSaturationEffect.html">HueSaturationEffect</a></li><li><a href="Luminosity.html">Luminosity</a></li><li><a href="LuminosityEffect.html">LuminosityEffect</a></li><li><a href="OutlinePostEffect.html">OutlinePostEffect</a></li><li><a href="SSAO.html">SSAO</a></li><li><a href="SSAOEffect.html">SSAOEffect</a></li><li><a href="SepiaEffect.html">SepiaEffect</a></li><li><a href="VerticalTiltShift.html">VerticalTiltShift</a></li><li><a href="VerticalTiltShiftEffect.html">VerticalTiltShiftEffect</a></li><li><a href="Vignette.html">Vignette</a></li><li><a href="VignetteEffect.html">VignetteEffect</a></li><li><a href="blend.html">blend</a></li><li><a href="outline.html">outline</a></li><li><a href="sepia.html">sepia</a></li></ul><h3>Global</h3><ul><li><a href="global.html#calculateBlurValues">calculateBlurValues</a></li><li><a href="global.html#computeGaussian">computeGaussian</a></li></ul>
+</nav>
+
+<br class="clear">
+
+<footer>
+    Documentation generated by <a href="https://github.com/jsdoc/jsdoc">JSDoc 4.0.4</a> on Sat Sep 27 2025 18:54:43 GMT+0900 (日本標準時)
+</footer>
+
+<script> prettyPrint(); </script>
+<script src="scripts/linenumber.js"> </script>
+</body>
+</html>

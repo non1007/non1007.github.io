@@ -1,0 +1,168 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <title>JSDoc: Source: PostEffect/posteffect-vignette.js</title>
+
+    <script src="scripts/prettify/prettify.js"> </script>
+    <script src="scripts/prettify/lang-css.js"> </script>
+    <!--[if lt IE 9]>
+      <script src="//html5shiv.googlecode.com/svn/trunk/html5.js"></script>
+    <![endif]-->
+    <link type="text/css" rel="stylesheet" href="styles/prettify-tomorrow.css">
+    <link type="text/css" rel="stylesheet" href="styles/jsdoc-default.css">
+</head>
+
+<body>
+
+<div id="main">
+
+    <h1 class="page-title">Source: PostEffect/posteffect-vignette.js</h1>
+
+    
+
+
+
+    
+    <section>
+        <article>
+            <pre class="prettyprint source linenums"><code>///&lt;reference path="/Users/sasakiwa/.vscode/extensions/playcanvas.playcanvas-0.2.2/node_modules/playcanvas/build/playcanvas.d.ts" />;
+// --------------- POST EFFECT DEFINITION --------------- //
+/**
+ * @class
+ * @name VignetteEffect
+ * @classdesc Implements a vignette post processing effect.
+ * [EN] Post effect that darkens the image towards the edges, simulating lens vignetting.  
+ * [JP] 画像の端を暗くするビネット効果を適用し、レンズのビネット現象を再現するポストエフェクト。
+ *
+ * @augments PostEffect
+ * @param {GraphicsDevice} graphicsDevice
+ * [EN] The graphics device of the application.  
+ * [JP] アプリケーションの GraphicsDevice。
+ *
+ * @property {number} offset
+ * [EN] Controls how far from the center the vignette effect starts.  
+ * [JP] ビネット効果が画面中心からどの程度離れた位置で始まるかを制御する。  
+ *
+ * @property {number} darkness
+ * [EN] Intensity of the vignette darkness at the edges.  
+ * [JP] 画面端に適用される暗さの強さ。
+ */
+class VignetteEffect extends pc.PostEffect {
+    constructor(graphicsDevice) {
+        super(graphicsDevice); // ← 必須
+        // Shader
+        const luminosityFrag = `
+            uniform sampler2D uColorBuffer;
+            uniform float uDarkness;
+            uniform float uOffset;
+            varying vec2 vUv0;
+            void main() {
+                vec4 texel = texture2D(uColorBuffer, vUv0);
+                vec2 uv = (vUv0 - vec2(0.5)) * vec2(uOffset);
+                gl_FragColor = vec4(mix(texel.rgb, vec3(1.0 - uDarkness), dot(uv, uv)), texel.a);
+            }
+        `;
+
+        this.vignetteShader = pc.ShaderUtils.createShader(graphicsDevice, {
+            uniqueName: 'VignetteShader',
+            attributes: { aPosition: pc.SEMANTIC_POSITION },
+            vertexGLSL: pc.PostEffect.quadVertexShader,
+            fragmentGLSL: luminosityFrag
+        });
+
+        this.offset = 1;
+        this.darkness = 1;
+    }
+
+    render(inputTarget, outputTarget, rect) {
+        const device = this.device;
+        const scope = device.scope;
+
+        scope.resolve('uColorBuffer').setValue(inputTarget.colorBuffer);
+        scope.resolve('uOffset').setValue(this.offset);
+        scope.resolve('uDarkness').setValue(this.darkness);
+        this.drawQuad(outputTarget, this.vignetteShader, rect);
+    }
+}
+
+// ----------------- SCRIPT DEFINITION ------------------ //
+/**
+ * @class
+ * @name Vignette
+ * @classdesc Script component wrapper for {@link VignetteEffect}.
+ * [EN] Script to use VignetteEffect inside the PlayCanvas Editor.  
+ * [JP] PlayCanvas エディタで VignetteEffect を利用するためのスクリプトコンポーネント。
+ *
+ * @property {number} offset
+ * [EN] Controls how far from the center the vignette starts (0 = center, higher = further).  
+ * [JP] ビネット効果が画面中心から始まる位置を制御（0 = 中央、値が大きいほど外側から）。  
+ *
+ * @property {number} darkness
+ * [EN] Darkness intensity at the screen edges.  
+ * [JP] 画面端に適用される暗さの強さ。
+ */
+var Vignette = pc.createScript('vignette');
+
+Vignette.attributes.add('offset', {
+    type: 'number',
+    default: 1,
+    min: 0,
+    title: 'Offset / オフセット',
+    description: 'EN: Distance from center where vignette starts. / JP: ビネット効果が中心から始まる距離。'
+});
+
+Vignette.attributes.add('darkness', {
+    type: 'number',
+    default: 1,
+    title: 'Darkness / 暗さ',
+    description: 'EN: Intensity of vignette darkness at the edges. / JP: 画面端に適用される暗さの強さ。'
+});
+
+// initialize code called once per entity
+Vignette.prototype.initialize = function () {
+    this.effect = new VignetteEffect(this.app.graphicsDevice);
+    this.effect.offset = this.offset;
+    this.effect.darkness = this.darkness;
+
+    this.on('attr', function (name, value) {
+        this.effect[name] = value;
+    }, this);
+
+    const queue = this.entity.camera.postEffects;
+    queue.addEffect(this.effect);
+
+    this.on('state', function (enabled) {
+        if (enabled) {
+            queue.addEffect(this.effect);
+        } else {
+            queue.removeEffect(this.effect);
+        }
+    });
+
+    this.on('destroy', function () {
+        queue.removeEffect(this.effect);
+    });
+};</code></pre>
+        </article>
+    </section>
+
+
+
+
+</div>
+
+<nav>
+    <h2><a href="index.html">Home</a></h2><h3>Classes</h3><ul><li><a href="BlendEffect.html">BlendEffect</a></li><li><a href="Bloom.html">Bloom</a></li><li><a href="BloomEffect.html">BloomEffect</a></li><li><a href="Bokeh.html">Bokeh</a></li><li><a href="BokehEffect.html">BokehEffect</a></li><li><a href="BrightnessContrast.html">BrightnessContrast</a></li><li><a href="BrightnessContrastEffect.html">BrightnessContrastEffect</a></li><li><a href="EdgeDetect.html">EdgeDetect</a></li><li><a href="EdgeDetectEffect.html">EdgeDetectEffect</a></li><li><a href="Fxaa.html">Fxaa</a></li><li><a href="FxaaEffect.html">FxaaEffect</a></li><li><a href="G2Toonshader.html">G2Toonshader</a></li><li><a href="HorizontalTiltShift.html">HorizontalTiltShift</a></li><li><a href="HorizontalTiltShiftEffect.html">HorizontalTiltShiftEffect</a></li><li><a href="HueSaturation.html">HueSaturation</a></li><li><a href="HueSaturationEffect.html">HueSaturationEffect</a></li><li><a href="Luminosity.html">Luminosity</a></li><li><a href="LuminosityEffect.html">LuminosityEffect</a></li><li><a href="OutlinePostEffect.html">OutlinePostEffect</a></li><li><a href="SSAO.html">SSAO</a></li><li><a href="SSAOEffect.html">SSAOEffect</a></li><li><a href="SepiaEffect.html">SepiaEffect</a></li><li><a href="VerticalTiltShift.html">VerticalTiltShift</a></li><li><a href="VerticalTiltShiftEffect.html">VerticalTiltShiftEffect</a></li><li><a href="Vignette.html">Vignette</a></li><li><a href="VignetteEffect.html">VignetteEffect</a></li><li><a href="blend.html">blend</a></li><li><a href="outline.html">outline</a></li><li><a href="sepia.html">sepia</a></li></ul><h3>Global</h3><ul><li><a href="global.html#calculateBlurValues">calculateBlurValues</a></li><li><a href="global.html#computeGaussian">computeGaussian</a></li></ul>
+</nav>
+
+<br class="clear">
+
+<footer>
+    Documentation generated by <a href="https://github.com/jsdoc/jsdoc">JSDoc 4.0.4</a> on Sat Sep 27 2025 18:54:43 GMT+0900 (日本標準時)
+</footer>
+
+<script> prettyPrint(); </script>
+<script src="scripts/linenumber.js"> </script>
+</body>
+</html>
